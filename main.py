@@ -7,26 +7,31 @@ class User:
         self.user_id: int = user_id
         self.user_login: str = user_login
         self._password_hash: str = password_hash
-        self._user_balance: int = 0
+        self.balance = Balance()
+
+
+class Balance:
+    def __init__(self):
+        self._balance: int = 0
 
     def credit_balance(self, tokens: int):
         if tokens <= 0:
             raise ValueError("Сумма пополнения должна быть больше нуля")
-        self._user_balance += tokens
+        self._balance += tokens
 
     def debit_balance(self, tokens: int):
         if tokens <= 0:
             raise ValueError("Сумма списания должна быть больше нуля")
 
-        if tokens > self._user_balance:
+        if tokens > self._balance:
             raise ValueError(
-                f"Недостаточно средств на балансе!\nСумма списания не должна превышать баланс ({self._user_balance})"
+                f"Недостаточно средств на балансе!\nСумма списания не должна превышать баланс ({self._balance})"
             )
 
-        self._user_balance -= tokens
+        self._balance -= tokens
 
     def get_balance(self):
-        return self._user_balance
+        return self._balance
 
 
 class MlModel:
@@ -80,7 +85,7 @@ class CreditTransaction(Transaction):
         if self.is_applied:
             raise ValueError("Транзакция уже была выполнена")
 
-        self.user.credit_balance(self.amount)
+        self.user.balance.credit_balance(self.amount)
         self.is_applied = True
         return f"Счет пополнен на {self.amount}"
 
@@ -101,7 +106,7 @@ class DebitTransaction(Transaction):
         if self.is_applied:
             raise ValueError("Транзакция уже была выполнена")
 
-        self.user.debit_balance(self.amount)
+        self.user.balance.debit_balance(self.amount)
         self.is_applied = True
 
         return f"Со счета списано {self.amount} за задачу {self.ml_task.task_id}"
@@ -155,7 +160,7 @@ class MlTask:
         if len(valid_data) == 0:
             raise ValueError("Нет валидных данных для предсказания")
 
-        user_balance = self.user.get_balance()
+        user_balance = self.user.balance.get_balance()
         valid_predict_cost = len(valid_data) * self.model.prediction_cost
 
         if valid_predict_cost > user_balance:
@@ -203,7 +208,7 @@ if __name__ == "__main__":
     )
 
     print(credit_transaction.apply())
-    print("Баланс после пополнения:", user.get_balance())
+    print("Баланс после пополнения:", user.balance.get_balance())
 
     model = FAQNavigatorModel(model_id=1)
 
@@ -224,7 +229,7 @@ if __name__ == "__main__":
     print("Предсказания:", result.predictions)
     print("Ошибочные строки:", result.invalid_data)
     print("Статус задачи:", task.status)
-    print("Баланс после выполнения:", user.get_balance())
+    print("Баланс после выполнения:", user.balance.get_balance())
 
     try:
         task.run()
