@@ -15,22 +15,23 @@
 
 ## Запуск
 
-1. Создать `.env` из примера:
+Создать `.env` из примера:
 
 ```bat
 copy .env.example .env
 ```
 
-2. Запустить сервисы:
+Запустить сервисы:
 
 ```bat
 docker compose up --build
 ```
 
-После запуска:
+После запуска доступны:
 
 * приложение — http://localhost
 * FastAPI docs — http://localhost/docs
+* проверка состояния — http://localhost/health
 * RabbitMQ — http://localhost:15672
 
 Логин и пароль RabbitMQ:
@@ -55,3 +56,17 @@ docker compose down
 * `rabbitmq` — RabbitMQ.
 
 FastAPI не публикует порт напрямую: запросы идут через Nginx.
+
+Для `app` настроен Docker healthcheck. Контейнер считается готовым после успешного ответа маршрута `/health`. Nginx запускается только после перехода приложения в состояние `healthy`.
+
+Проверить состояние контейнеров:
+
+```bat
+docker compose ps
+```
+
+У приложения должен быть статус:
+
+```text
+Up (healthy)
+```
