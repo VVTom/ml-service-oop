@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.env/
+env/
 .env
-.vscode/
-.idea/
+
+app/.env
+
+data/postgres/*
+data/rabbitmq/*
