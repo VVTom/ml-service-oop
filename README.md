@@ -91,3 +91,23 @@ Up (healthy)
 ```bat
 docker compose exec app python init_db.py
 ```
+
+## REST API
+
+Доступные endpoints:
+
+- `POST /auth/register` — регистрация пользователя;
+- `GET /users/me` — данные текущего пользователя;
+- `GET /balance` — просмотр баланса;
+- `POST /balance/topup` — пополнение баланса;
+- `POST /predict` — выполнение ML-предсказания;
+- `GET /history/transactions` — история транзакций;
+- `GET /history/predictions` — история ML-запросов.
+
+Аутентификация реализована через HTTP Basic.
+
+Документация Swagger доступна по адресу:
+
+```text
+http://localhost/docs
+```

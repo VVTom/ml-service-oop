@@ -1,3 +1,6 @@
+import hashlib
+import os
+
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -30,9 +33,7 @@ def get_user_by_login(
     session: Session,
     login: str,
 ) -> User:
-    user = session.scalar(
-        select(User).where(User.login == login)
-    )
+    user = session.scalar(select(User).where(User.login == login))
 
     if user is None:
         raise ValueError(f"Пользователь {login!r} не найден")
@@ -44,9 +45,7 @@ def get_model_by_name(
     session: Session,
     name: str,
 ) -> MLModel:
-    ml_model = session.scalar(
-        select(MLModel).where(MLModel.name == name)
-    )
+    ml_model = session.scalar(select(MLModel).where(MLModel.name == name))
 
     if ml_model is None:
         raise ValueError(f"ML-модель {name!r} не найдена")
@@ -62,9 +61,7 @@ def get_balance(
     user_id: int,
     lock: bool = False,
 ) -> Balance:
-    statement = select(Balance).where(
-        Balance.user_id == user_id
-    )
+    statement = select(Balance).where(Balance.user_id == user_id)
 
     if lock:
         statement = statement.with_for_update()
@@ -72,9 +69,7 @@ def get_balance(
     balance = session.scalar(statement)
 
     if balance is None:
-        raise ValueError(
-            f"Баланс пользователя с id={user_id} не найден"
-        )
+        raise ValueError(f"Баланс пользователя с id={user_id} не найден")
 
     return balance
 
@@ -115,16 +110,12 @@ def create_ml_task(
     user = session.get(User, user_id)
 
     if user is None:
-        raise ValueError(
-            f"Пользователь с id={user_id} не найден"
-        )
+        raise ValueError(f"Пользователь с id={user_id} не найден")
 
     ml_model = session.get(MLModel, model_id)
 
     if ml_model is None:
-        raise ValueError(
-            f"ML-модель с id={model_id} не найдена"
-        )
+        raise ValueError(f"ML-модель с id={model_id} не найдена")
 
     if not ml_model.is_active:
         raise ValueError("ML-модель сейчас недоступна")
@@ -148,23 +139,15 @@ def complete_ml_task(
     prediction_data: dict[str, Any],
     invalid_rows: list[dict[str, Any]] | None = None,
 ) -> PredictionResult:
-    task = session.scalar(
-        select(MLTask)
-        .where(MLTask.id == task_id)
-        .with_for_update()
-    )
+    task = session.scalar(select(MLTask).where(MLTask.id == task_id).with_for_update())
 
     if task is None:
-        raise ValueError(
-            f"ML-задача с id={task_id} не найдена"
-        )
+        raise ValueError(f"ML-задача с id={task_id} не найдена")
 
     # Повторная обработка не должна повторно списывать деньги.
     if task.status == TaskStatus.COMPLETED and task.charged:
         if task.result is None:
-            raise RuntimeError(
-                "Задача завершена, но результат отсутствует"
-            )
+            raise RuntimeError("Задача завершена, но результат отсутствует")
 
         return task.result
 
@@ -247,3 +230,62 @@ def get_prediction_history(
     ).all()
 
     return list(tasks)
+
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+
+    password_hash = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        100_000,
+    )
+
+    return f"{salt.hex()}${password_hash.hex()}"
+
+
+def verify_password(
+    password: str,
+    stored_password_hash: str,
+) -> bool:
+    try:
+        salt_hex, password_hash_hex = stored_password_hash.split("$", maxsplit=1)
+    except ValueError:
+        return False
+
+    salt = bytes.fromhex(salt_hex)
+
+    calculated_hash = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        100_000,
+    )
+
+    return calculated_hash.hex() == password_hash_hex
+
+
+def register_user(
+    session: Session,
+    login: str,
+    password: str,
+) -> User:
+    existing_user = session.scalar(select(User).where(User.login == login))
+
+    if existing_user is not None:
+        raise ValueError(f"Пользователь с таким логином уже существует")
+
+    user = User(
+        login=login,
+        password_hash=hash_password(password),
+    )
+
+    user.balance = Balance(
+        amount=Decimal("0.00"),
+    )
+
+    session.add(user)
+    session.flush()
+
+    return user
