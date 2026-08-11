@@ -12,6 +12,8 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+    environment:
+      RABBITMQ_HOST: rabbitmq
 
   web-proxy:
     build: ./web-proxy
@@ -57,3 +59,39 @@ services:
       web-proxy:
         condition: service_started
     restart: unless-stopped
+
+  worker-1:
+    build:
+      context: ./app
+    command: python -u -m workers.worker
+    env_file:
+      - ./app/.env
+      - ./.env
+    environment:
+      DB_HOST: database
+      RABBITMQ_HOST: rabbitmq
+      WORKER_ID: worker-1
+    volumes:
+      - ./app/src:/app/src
+    depends_on:
+      - database
+      - rabbitmq
+    restart: on-failure
+
+  worker-2:
+    build:
+      context: ./app
+    command: python -u -m workers.worker
+    env_file:
+      - ./app/.env
+      - ./.env
+    environment:
+      DB_HOST: database
+      RABBITMQ_HOST: rabbitmq
+      WORKER_ID: worker-2
+    volumes:
+      - ./app/src:/app/src
+    depends_on:
+      - database
+      - rabbitmq
+    restart: on-failure

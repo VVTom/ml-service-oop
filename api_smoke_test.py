@@ -89,6 +89,38 @@ def assert_status(
     print(f"[OK] {test_name}: HTTP {actual_status}")
 
 
+def wait_for_prediction(
+    task_id: int,
+    timeout: float = 10.0,
+    interval: float = 0.2,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        status_code, predictions = send_request(
+            method="GET",
+            path="/history/predictions",
+            authenticated=True,
+        )
+
+        assert_status(
+            test_name="Получение истории предсказаний во время ожидания",
+            actual_status=status_code,
+            expected_status=200,
+            response_body=predictions,
+        )
+
+        for prediction in predictions:
+            if prediction["task_id"] == task_id:
+                return prediction
+
+        time.sleep(interval)
+
+    raise AssertionError(
+        f"Задача {task_id} не завершилась за {timeout} секунд"
+    )
+
+
 def run_tests() -> None:
     print("=" * 70)
     print("Запуск интеграционных тестов REST API")
@@ -252,7 +284,7 @@ def run_tests() -> None:
         response_body=body,
     )
 
-    # 10. Успешное предсказание должно списать 10.00.
+    # 10. Успешный запрос на предсказание ставится в очередь RabbitMQ.
     status_code, body = send_request(
         method="POST",
         path="/predict",
@@ -264,23 +296,60 @@ def run_tests() -> None:
     )
 
     assert_status(
-        test_name="Успешное ML-предсказание",
+        test_name="ML-задача принята в обработку",
+        actual_status=status_code,
+        expected_status=202,
+        response_body=body,
+    )
+
+    assert body["status"] == "pending", (
+        f"Ожидался статус pending, получено: {body}"
+    )
+
+    task_id = body["task_id"]
+    print(f"[OK] Задача {task_id} отправлена в RabbitMQ")
+
+    # Ждём, пока один из воркеров обработает задачу.
+    completed_prediction = wait_for_prediction(task_id)
+
+    assert completed_prediction["status"] == "completed", (
+        f"Ожидался статус completed, получено: {completed_prediction}"
+    )
+
+    worker_id = completed_prediction["prediction"].get("worker_id")
+
+    assert worker_id in {"worker-1", "worker-2"}, (
+        f"Не найден корректный worker_id: {completed_prediction}"
+    )
+
+    assert completed_prediction["charged"] == "10.00", (
+        f"Ожидалось списание 10.00, получено: {completed_prediction}"
+    )
+
+    print(
+        f"[OK] Задача {task_id} обработана асинхронно воркером {worker_id}"
+    )
+
+    status_code, body = send_request(
+        method="GET",
+        path="/balance",
+        authenticated=True,
+    )
+
+    assert_status(
+        test_name="Получение баланса после обработки ML-задачи",
         actual_status=status_code,
         expected_status=200,
         response_body=body,
     )
 
-    assert body["status"] == "completed", f"Ожидался статус completed, получено: {body}"
-
-    assert body["charged"] == "10.00", f"Ожидалось списание 10.00, получено: {body}"
-
     assert body["balance"] == "0.00", (
         f"После списания ожидался баланс 0.00, получено: {body}"
     )
 
-    print("[OK] Предсказание выполнено и баланс уменьшился до 0.00")
+    print("[OK] После обработки задачи баланс уменьшился до 0.00")
 
-    # 11. Второе предсказание должно вернуть 402.
+    # 11. Второе предсказание после списания должно вернуть 402.
     status_code, body = send_request(
         method="POST",
         path="/predict",
@@ -334,15 +403,29 @@ def run_tests() -> None:
         response_body=predictions,
     )
 
-    assert len(predictions) == 1, (
-        f"Ожидалось одно успешное предсказание, получено: {len(predictions)}"
+    matching_predictions = [
+        prediction
+        for prediction in predictions
+        if prediction["task_id"] == task_id
+    ]
+
+    assert len(matching_predictions) == 1, (
+        f"Не найдена завершённая задача {task_id}: {predictions}"
     )
 
-    assert predictions[0]["status"] == "completed", (
-        f"Некорректный статус задачи: {predictions[0]}"
+    assert matching_predictions[0]["status"] == "completed", (
+        f"Некорректный статус задачи: {matching_predictions[0]}"
     )
 
-    print("[OK] История содержит одно завершённое предсказание")
+    assert matching_predictions[0]["prediction"].get("worker_id") in {
+        "worker-1",
+        "worker-2",
+    }, (
+        f"В результате отсутствует корректный worker_id: "
+        f"{matching_predictions[0]}"
+    )
+
+    print("[OK] История содержит завершённое предсказание с worker_id")
 
     print()
     print("=" * 70)

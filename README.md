@@ -11,10 +11,12 @@
 - PostgreSQL и SQLAlchemy ORM;
 - REST API на FastAPI;
 - Telegram-бот;
+- RabbitMQ;
+- два ML-воркера;
 - Docker Compose;
 - интеграционный тест API.
 
-Средства списываются с баланса только после успешного выполнения ML-задачи. Повторная обработка завершённой задачи не приводит к повторному списанию.
+Средства списываются с баланса после успешного выполнения ML-задачи.
 
 ## Запуск
 
@@ -55,21 +57,17 @@ docker compose down
 - healthcheck — `http://localhost/health`
 - RabbitMQ — `http://localhost:15672`
 
-## Сервисы Docker Compose
+## Docker Compose
 
-Проект запускает пять сервисов:
+Проект запускает семь сервисов:
 
-- `app` — FastAPI-приложение;
+- `app` — FastAPI;
 - `web-proxy` — Nginx;
 - `database` — PostgreSQL;
 - `rabbitmq` — RabbitMQ;
-- `telegram-bot` — Telegram-бот.
-
-FastAPI доступен через Nginx.
-
-Для `app` настроен healthcheck через `/health`.
-
-RabbitMQ пока запускается как отдельный сервис и будет использоваться на следующих этапах проекта.
+- `telegram-bot` — Telegram-бот;
+- `worker-1` — обработчик ML-задач;
+- `worker-2` — обработчик ML-задач.
 
 ## База данных
 
@@ -92,8 +90,6 @@ docker compose exec app python init_db.py
 
 ## REST API
 
-Endpoints разделены по отдельным файлам в `app/src/routers`.
-
 Доступные endpoints:
 
 - `POST /auth/register` — регистрация;
@@ -101,7 +97,7 @@ Endpoints разделены по отдельным файлам в `app/src/ro
 - `GET /users/me` — данные пользователя;
 - `GET /balance` — просмотр баланса;
 - `POST /balance/topup` — пополнение баланса;
-- `POST /predict` — выполнение предсказания;
+- `POST /predict` — создание ML-задачи;
 - `GET /history/transactions` — история транзакций;
 - `GET /history/predictions` — история предсказаний.
 
@@ -113,44 +109,78 @@ Swagger:
 http://localhost/docs
 ```
 
-На текущем этапе `/predict` использует простую демонстрационную функцию определения тональности текста.
+## RabbitMQ и ML-воркеры
+
+ML-задачи обрабатываются асинхронно через RabbitMQ.
+
+После запроса:
+
+```text
+POST /predict
+```
+
+FastAPI создаёт задачу со статусом `pending` и отправляет сообщение в очередь:
+
+```text
+ml_tasks
+```
+
+К очереди подключены два воркера:
+
+```text
+worker-1
+worker-2
+```
+
+RabbitMQ распределяет задачи между ними.
+
+Воркеры:
+
+- получают сообщение;
+- проверяют входные данные;
+- выполняют демонстрационное предсказание;
+- сохраняют результат в PostgreSQL;
+- переводят задачу в статус `completed`.
+
+Пример ответа `/predict`:
+
+```json
+{
+  "task_id": 14,
+  "status": "pending"
+}
+```
+
+После обработки результат можно получить через:
+
+```text
+GET /history/predictions
+```
+
+В результате сохраняется worker, который обработал задачу:
+
+```json
+{
+  "worker_id": "worker-2"
+}
+```
+
+При ручной проверке задачи распределились между двумя воркерами:
+
+```text
+worker-1: 9, 11, 13
+worker-2: 8, 10, 12
+```
 
 ## Telegram-бот
 
-Telegram-бот работает с REST API и поддерживает команды:
+Telegram-бот был реализован на предыдущем этапе проекта и работает с REST API.
 
-- `/start`
-- `/login`
-- `/logout`
-- `/balance`
-- `/topup 100`
-- `/predict sentiment-model текст`
-- `/transactions`
-- `/history`
-
-Пример:
-
-```text
-/login
-```
-
-После авторизации:
-
-```text
-/topup 100
-/predict sentiment-model Мне нравится этот сервис
-/history
-```
+Для проверки RabbitMQ и ML-воркеров в текущем задании используется REST API.
 
 ## Тестирование
 
-Для проверки REST API используется:
-
-```text
-api_smoke_test.py
-```
-
-Запуск:
+Запуск интеграционного теста:
 
 ```bat
 python api_smoke_test.py
@@ -158,21 +188,32 @@ python api_smoke_test.py
 
 Тест проверяет:
 
-- регистрацию и вход;
-- неправильный пароль;
-- работу авторизации;
-- пополнение баланса;
+- регистрацию и авторизацию;
+- работу баланса;
 - валидацию данных;
-- выполнение предсказания;
+- создание ML-задачи;
+- отправку задачи на асинхронную обработку;
+- завершение задачи воркером;
 - списание средств;
-- недостаточный баланс;
-- историю транзакций;
-- историю предсказаний.
+- историю транзакций и предсказаний.
 
-При успешном прохождении теста:
+При успешном прохождении:
 
 ```text
 ВСЕ ИНТЕГРАЦИОННЫЕ ТЕСТЫ УСПЕШНО ПРОЙДЕНЫ
+```
+
+Для проверки RabbitMQ:
+
+```bat
+docker compose exec rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+```
+
+Для просмотра работы воркеров:
+
+```bat
+docker compose logs worker-1
+docker compose logs worker-2
 ```
 
 ## Структура проекта
@@ -183,23 +224,17 @@ ml-service-oop/
 │   ├── Dockerfile
 │   └── src/
 │       ├── routers/
-│       │   ├── auth.py
-│       │   ├── users.py
-│       │   ├── balance.py
-│       │   ├── predictions.py
-│       │   └── history.py
+│       ├── workers/
+│       │   └── worker.py
 │       ├── api.py
 │       ├── database.py
 │       ├── dependencies.py
 │       ├── models.py
+│       ├── rabbitmq.py
 │       ├── schemas.py
 │       └── services.py
 │
 ├── telegram_bot/
-│   ├── Dockerfile
-│   ├── bot.py
-│   └── requirements.txt
-│
 ├── web-proxy/
 ├── api_smoke_test.py
 ├── docker-compose.yml
@@ -213,8 +248,9 @@ ml-service-oop/
 - Pydantic
 - SQLAlchemy
 - PostgreSQL
+- RabbitMQ
+- pika
 - aiogram
 - Nginx
-- RabbitMQ
 - Docker
 - Docker Compose
