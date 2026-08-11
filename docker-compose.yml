@@ -42,3 +42,18 @@ services:
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     restart: on-failure
+
+  telegram-bot:
+    image: ml-service-telegram-bot:latest
+    build: 
+      context: ./telegram_bot
+    env_file:
+      - ./telegram_bot/.env
+    environment:
+      API_BASE_URL: http://web-proxy
+    depends_on:
+      app:
+        condition: service_healthy
+      web-proxy:
+        condition: service_started
+    restart: unless-stopped
