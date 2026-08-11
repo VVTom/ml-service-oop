@@ -54,22 +54,14 @@ def send_request(
         with urlopen(request, timeout=10) as response:
             response_body = response.read().decode("utf-8")
 
-            parsed_body = (
-                json.loads(response_body)
-                if response_body
-                else None
-            )
+            parsed_body = json.loads(response_body) if response_body else None
 
             return response.status, parsed_body
 
     except HTTPError as error:
         response_body = error.read().decode("utf-8")
 
-        parsed_body = (
-            json.loads(response_body)
-            if response_body
-            else None
-        )
+        parsed_body = json.loads(response_body) if response_body else None
 
         return error.code, parsed_body
 
@@ -135,7 +127,47 @@ def run_tests() -> None:
         response_body=body,
     )
 
-    # 3. Повторная регистрация должна вернуть 409.
+    # 3. Успешный логин.
+    status_code, body = send_request(
+        method="POST",
+        path="/auth/login",
+        payload={
+            "login": TEST_LOGIN,
+            "password": TEST_PASSWORD,
+        },
+    )
+
+    assert_status(
+        test_name="Успешный логин",
+        actual_status=status_code,
+        expected_status=200,
+        response_body=body,
+    )
+
+    assert body["login"] == TEST_LOGIN, (
+        f"Ожидался пользователь {TEST_LOGIN}, получено: {body}"
+    )
+
+    print("[OK] Пользователь успешно авторизован")
+
+    # 4. Логин с неверным паролем должен вернуть 401.
+    status_code, body = send_request(
+        method="POST",
+        path="/auth/login",
+        payload={
+            "login": TEST_LOGIN,
+            "password": "wrong_password",
+        },
+    )
+
+    assert_status(
+        test_name="Логин с неверным паролем",
+        actual_status=status_code,
+        expected_status=401,
+        response_body=body,
+    )
+
+    # 5. Повторная регистрация должна вернуть 409.
     status_code, body = send_request(
         method="POST",
         path="/auth/register",
@@ -149,7 +181,7 @@ def run_tests() -> None:
         response_body=body,
     )
 
-    # 4. Запрос баланса без авторизации должен вернуть 401.
+    # 6. Запрос баланса без авторизации должен вернуть 401.
     status_code, body = send_request(
         method="GET",
         path="/balance",
@@ -162,7 +194,7 @@ def run_tests() -> None:
         response_body=body,
     )
 
-    # 5. Отрицательное пополнение должно вернуть 422.
+    # 7. Отрицательное пополнение должно вернуть 422.
     status_code, body = send_request(
         method="POST",
         path="/balance/topup",
@@ -179,7 +211,7 @@ def run_tests() -> None:
         response_body=body,
     )
 
-    # 6. Пополняем баланс ровно на стоимость одного предсказания.
+    # 8. Пополняем баланс ровно на стоимость одного предсказания.
     status_code, body = send_request(
         method="POST",
         path="/balance/topup",
@@ -197,13 +229,12 @@ def run_tests() -> None:
     )
 
     assert body["balance"] == "10.00", (
-        "После пополнения ожидался баланс 10.00, "
-        f"но получено: {body}"
+        f"После пополнения ожидался баланс 10.00, но получено: {body}"
     )
 
     print("[OK] Баланс после пополнения равен 10.00")
 
-    # 7. Неизвестная модель должна вернуть 400.
+    # 9. Неизвестная модель должна вернуть 400.
     status_code, body = send_request(
         method="POST",
         path="/predict",
@@ -221,7 +252,7 @@ def run_tests() -> None:
         response_body=body,
     )
 
-    # 8. Успешное предсказание должно списать 10.00.
+    # 10. Успешное предсказание должно списать 10.00.
     status_code, body = send_request(
         method="POST",
         path="/predict",
@@ -239,13 +270,9 @@ def run_tests() -> None:
         response_body=body,
     )
 
-    assert body["status"] == "completed", (
-        f"Ожидался статус completed, получено: {body}"
-    )
+    assert body["status"] == "completed", f"Ожидался статус completed, получено: {body}"
 
-    assert body["charged"] == "10.00", (
-        f"Ожидалось списание 10.00, получено: {body}"
-    )
+    assert body["charged"] == "10.00", f"Ожидалось списание 10.00, получено: {body}"
 
     assert body["balance"] == "0.00", (
         f"После списания ожидался баланс 0.00, получено: {body}"
@@ -253,7 +280,7 @@ def run_tests() -> None:
 
     print("[OK] Предсказание выполнено и баланс уменьшился до 0.00")
 
-    # 9. Второе предсказание должно вернуть 402.
+    # 11. Второе предсказание должно вернуть 402.
     status_code, body = send_request(
         method="POST",
         path="/predict",
@@ -271,7 +298,7 @@ def run_tests() -> None:
         response_body=body,
     )
 
-    # 10. Проверяем историю транзакций.
+    # 12. Проверяем историю транзакций.
     status_code, transactions = send_request(
         method="GET",
         path="/history/transactions",
@@ -285,22 +312,15 @@ def run_tests() -> None:
         response_body=transactions,
     )
 
-    transaction_types = {
-        transaction["operation_type"]
-        for transaction in transactions
-    }
+    transaction_types = {transaction["operation_type"] for transaction in transactions}
 
-    assert "credit" in transaction_types, (
-        "В истории отсутствует credit-транзакция"
-    )
+    assert "credit" in transaction_types, "В истории отсутствует credit-транзакция"
 
-    assert "debit" in transaction_types, (
-        "В истории отсутствует debit-транзакция"
-    )
+    assert "debit" in transaction_types, "В истории отсутствует debit-транзакция"
 
     print("[OK] История содержит credit и debit")
 
-    # 11. Проверяем историю предсказаний.
+    # 13. Проверяем историю предсказаний.
     status_code, predictions = send_request(
         method="GET",
         path="/history/predictions",
@@ -315,8 +335,7 @@ def run_tests() -> None:
     )
 
     assert len(predictions) == 1, (
-        "Ожидалось одно успешное предсказание, "
-        f"получено: {len(predictions)}"
+        f"Ожидалось одно успешное предсказание, получено: {len(predictions)}"
     )
 
     assert predictions[0]["status"] == "completed", (

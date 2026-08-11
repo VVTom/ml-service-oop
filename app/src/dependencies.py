@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from models import User
-from services import get_user_by_login, verify_password
+from services import authenticate_user
 
 security = HTTPBasic()
 
@@ -24,9 +24,10 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     try:
-        user = get_user_by_login(
+        return authenticate_user(
             session=db,
             login=credentials.username,
+            password=credentials.password,
         )
 
     except ValueError as error:
@@ -35,15 +36,3 @@ def get_current_user(
             detail="Неверный логин или пароль",
             headers={"WWW-Authenticate": "Basic"},
         ) from error
-
-    if not verify_password(
-        password=credentials.password,
-        stored_password_hash=user.password_hash,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный логин или пароль",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-
-    return user

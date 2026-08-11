@@ -266,6 +266,22 @@ def verify_password(
     return calculated_hash.hex() == password_hash_hex
 
 
+def authenticate_user(
+    session: Session,
+    login: str,
+    password: str,
+) -> User:
+    try:
+        user = get_user_by_login(session=session, login=login)
+    except ValueError as error:
+        raise ValueError("Неверный логин или пароль") from error
+
+    if not verify_password(password=password, stored_password_hash=user.password_hash):
+        raise ValueError("Неверный логин или пароль")
+
+    return user
+
+
 def register_user(
     session: Session,
     login: str,
