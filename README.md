@@ -13,6 +13,7 @@
 - Telegram-бот;
 - RabbitMQ;
 - два независимых ML-воркера;
+- Web-интерфейс на Streamlit;
 - реальная ML-модель для анализа тональности текста;
 - Docker Compose;
 - интеграционный тест API.
@@ -60,7 +61,7 @@ docker compose down
 
 ## Docker Compose
 
-Проект запускает семь сервисов:
+Проект запускает восемь сервисов:
 
 - `app` — FastAPI;
 - `web-proxy` — Nginx;
@@ -68,7 +69,8 @@ docker compose down
 - `rabbitmq` — RabbitMQ;
 - `telegram-bot` — Telegram-бот;
 - `worker-1` — обработчик ML-задач;
-- `worker-2` — обработчик ML-задач.
+- `worker-2` — обработчик ML-задач;
+- `web-ui` — Web-интерфейс на Streamlit.
 
 ML-воркеры собираются из отдельного каталога `worker` и имеют собственные `Dockerfile` и `requirements.txt`.
 
@@ -198,6 +200,33 @@ Worker не зависит напрямую от FastAPI, SQLAlchemy и PostgreS
 
 После выполнения предсказания worker отправляет результат в приложение по HTTP, а уже FastAPI выполняет бизнес-логику сохранения результата и списания средств.
 
+
+## Web-интерфейс
+
+Web-интерфейс реализован на Streamlit и работает поверх существующего REST API.
+
+Frontend не дублирует бизнес-логику backend.
+
+Доступные возможности:
+
+- главная страница;
+- регистрация и авторизация;
+- личный кабинет;
+- просмотр и пополнение баланса;
+- ML-анализ одного текста;
+- обработка нескольких строк;
+- отображение отклонённых данных;
+- история транзакций;
+- история предсказаний.
+
+Web-интерфейс доступен по адресу:
+
+```text
+http://localhost:8501
+```
+
+После отправки ML-запроса frontend получает `task_id`, ожидает завершения асинхронной задачи и отображает результат модели, worker, статус и списанную сумму.
+
 ## Telegram-бот
 
 Telegram-бот был реализован на предыдущем этапе проекта и работает с REST API.
@@ -272,6 +301,12 @@ ml-service-oop/
 │   ├── schemas.py
 │   └── worker.py
 │
+├── web-ui/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── api_client.py
+│   └── app.py
+│
 ├── telegram_bot/
 │   ├── Dockerfile
 │   ├── bot.py
@@ -287,6 +322,7 @@ ml-service-oop/
 
 - Python
 - FastAPI
+- Streamlit
 - Pydantic
 - SQLAlchemy
 - PostgreSQL

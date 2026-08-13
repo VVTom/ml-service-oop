@@ -89,3 +89,14 @@ services:
       - app
       - rabbitmq
     restart: on-failure
+
+  web-ui:
+    build:
+      context: ./web-ui
+    environment:
+      API_BASE_URL: http://app:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - app
+    restart: on-failure
