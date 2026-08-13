@@ -73,3 +73,12 @@ class MLTaskMessage(BaseModel):
 class PredictionAcceptedResponse(BaseModel):
     task_id: int
     status: str
+
+
+class WorkerResultRequest(BaseModel):
+    prediction: dict[str, Any]
+
+
+class WorkerResultResponse(BaseModel):
+    task_id: int
+    status: str

@@ -3,7 +3,7 @@ import os
 import uvicorn
 from fastapi import FastAPI
 
-from routers import auth, balance, users, predictions, history
+from routers import auth, balance, users, predictions, history, internal
 
 
 app = FastAPI()
@@ -13,6 +13,7 @@ app.include_router(users.router)
 app.include_router(balance.router)
 app.include_router(predictions.router)
 app.include_router(history.router)
+app.include_router(internal.router)
 
 
 @app.get("/")

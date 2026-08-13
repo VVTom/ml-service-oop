@@ -12,7 +12,8 @@
 - REST API на FastAPI;
 - Telegram-бот;
 - RabbitMQ;
-- два ML-воркера;
+- два независимых ML-воркера;
+- реальная ML-модель для анализа тональности текста;
 - Docker Compose;
 - интеграционный тест API.
 
@@ -68,6 +69,8 @@ docker compose down
 - `telegram-bot` — Telegram-бот;
 - `worker-1` — обработчик ML-задач;
 - `worker-2` — обработчик ML-задач.
+
+ML-воркеры собираются из отдельного каталога `worker` и имеют собственные `Dockerfile` и `requirements.txt`.
 
 ## База данных
 
@@ -132,21 +135,22 @@ worker-1
 worker-2
 ```
 
-RabbitMQ распределяет задачи между ними.
+RabbitMQ распределяет задачи между доступными воркерами.
 
 Воркеры:
 
-- получают сообщение;
-- проверяют входные данные;
-- выполняют демонстрационное предсказание;
-- сохраняют результат в PostgreSQL;
-- переводят задачу в статус `completed`.
+- получают сообщение из RabbitMQ;
+- проверяют входные данные через Pydantic;
+- выполняют предсказание с помощью ML-модели;
+- отправляют результат обратно в FastAPI через внутренний REST endpoint;
+- FastAPI сохраняет результат в PostgreSQL;
+- после успешной обработки задача переводится в статус `completed`.
 
 Пример ответа `/predict`:
 
 ```json
 {
-  "task_id": 14,
+  "task_id": 19,
   "status": "pending"
 }
 ```
@@ -157,20 +161,42 @@ RabbitMQ распределяет задачи между ними.
 GET /history/predictions
 ```
 
-В результате сохраняется worker, который обработал задачу:
+Пример результата:
 
 ```json
 {
-  "worker_id": "worker-2"
+  "sentiment": "positive",
+  "score": 0.986285,
+  "worker_id": "worker-1"
 }
 ```
 
-При ручной проверке задачи распределились между двумя воркерами:
+При ручной проверке с реальной ML-моделью задачи распределились между двумя воркерами:
 
 ```text
-worker-1: 9, 11, 13
-worker-2: 8, 10, 12
+worker-1: задачи 16, 17
+worker-2: задачи 15, 18
 ```
+
+## ML-модель
+
+Для определения тональности текста используется готовая модель Hugging Face:
+
+```text
+cointegrated/rubert-tiny-sentiment-balanced
+```
+
+Модель возвращает один из классов:
+
+- `positive`;
+- `neutral`;
+- `negative`.
+
+Для inference используются Hugging Face Transformers и PyTorch.
+
+Worker не зависит напрямую от FastAPI, SQLAlchemy и PostgreSQL.
+
+После выполнения предсказания worker отправляет результат в приложение по HTTP, а уже FastAPI выполняет бизнес-логику сохранения результата и списания средств.
 
 ## Telegram-бот
 
@@ -193,9 +219,11 @@ python api_smoke_test.py
 - валидацию данных;
 - создание ML-задачи;
 - отправку задачи на асинхронную обработку;
-- завершение задачи воркером;
+- обработку задачи одним из ML-воркеров;
+- завершение задачи;
 - списание средств;
-- историю транзакций и предсказаний.
+- историю транзакций;
+- историю предсказаний.
 
 При успешном прохождении:
 
@@ -224,8 +252,12 @@ ml-service-oop/
 │   ├── Dockerfile
 │   └── src/
 │       ├── routers/
-│       ├── workers/
-│       │   └── worker.py
+│       │   ├── auth.py
+│       │   ├── balance.py
+│       │   ├── history.py
+│       │   ├── internal.py
+│       │   ├── predictions.py
+│       │   └── users.py
 │       ├── api.py
 │       ├── database.py
 │       ├── dependencies.py
@@ -234,7 +266,17 @@ ml-service-oop/
 │       ├── schemas.py
 │       └── services.py
 │
+├── worker/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── schemas.py
+│   └── worker.py
+│
 ├── telegram_bot/
+│   ├── Dockerfile
+│   ├── bot.py
+│   └── requirements.txt
+│
 ├── web-proxy/
 ├── api_smoke_test.py
 ├── docker-compose.yml
@@ -250,6 +292,8 @@ ml-service-oop/
 - PostgreSQL
 - RabbitMQ
 - pika
+- Hugging Face Transformers
+- PyTorch
 - aiogram
 - Nginx
 - Docker
