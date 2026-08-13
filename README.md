@@ -2,42 +2,44 @@
 
 Учебный проект ML-сервиса на Python.
 
-В проекте есть:
+В проекте реализованы:
 
-* пользователь;
-* отдельный баланс;
-* ML-задачи;
-* демонстрационная модель;
-* результаты предсказаний;
-* транзакции.
+- пользователи и авторизация;
+- баланс пользователя;
+- ML-задачи и результаты предсказаний;
+- транзакции;
+- PostgreSQL и SQLAlchemy ORM;
+- REST API на FastAPI;
+- Telegram-бот;
+- Docker Compose;
+- интеграционный тест API.
 
-Валидные данные отправляются в модель, ошибочные строки возвращаются отдельно. Средства списываются только после успешного выполнения задачи.
+Средства списываются с баланса только после успешного выполнения ML-задачи. Повторная обработка завершённой задачи не приводит к повторному списанию.
 
 ## Запуск
 
-Создать `.env` из примера:
+Создать `.env` файлы из примеров.
+
+Для Windows:
 
 ```bat
 copy .env.example .env
+copy app\.env.example app\.env
+copy telegram_bot\.env.example telegram_bot\.env
 ```
 
-Запустить сервисы:
+В `telegram_bot/.env` указать токен Telegram-бота.
+
+Запустить проект:
 
 ```bat
-docker compose up --build
+docker compose up -d --build
 ```
 
-После запуска доступны:
+Проверить контейнеры:
 
-* приложение — http://localhost
-* FastAPI docs — http://localhost/docs
-* проверка состояния — http://localhost/health
-* RabbitMQ — http://localhost:15672
-
-Логин и пароль RabbitMQ:
-
-```text
-guest / guest
+```bat
+docker compose ps
 ```
 
 Остановка:
@@ -46,48 +48,173 @@ guest / guest
 docker compose down
 ```
 
-## Сервисы
+После запуска доступны:
 
-Проект запускает четыре контейнера:
+- приложение — `http://localhost`
+- Swagger — `http://localhost/docs`
+- healthcheck — `http://localhost/health`
+- RabbitMQ — `http://localhost:15672`
 
-* `app` — FastAPI;
-* `web-proxy` — Nginx;
-* `database` — PostgreSQL;
-* `rabbitmq` — RabbitMQ.
+## Сервисы Docker Compose
 
-FastAPI не публикует порт напрямую: запросы идут через Nginx.
+Проект запускает пять сервисов:
 
-Для `app` настроен Docker healthcheck. Контейнер считается готовым после успешного ответа маршрута `/health`. Nginx запускается только после перехода приложения в состояние `healthy`.
+- `app` — FastAPI-приложение;
+- `web-proxy` — Nginx;
+- `database` — PostgreSQL;
+- `rabbitmq` — RabbitMQ;
+- `telegram-bot` — Telegram-бот.
 
-Проверить состояние контейнеров:
+FastAPI доступен через Nginx.
 
-```bat
-docker compose ps
-```
+Для `app` настроен healthcheck через `/health`.
 
-У приложения должен быть статус:
+RabbitMQ пока запускается как отдельный сервис и будет использоваться на следующих этапах проекта.
 
-```text
-Up (healthy)
-```
+## База данных
 
-## ORM и база данных
+Используются PostgreSQL и SQLAlchemy ORM.
 
-В проекте используется PostgreSQL и SQLAlchemy ORM.
+Основные сущности:
 
-Реализованы таблицы:
+- `User`;
+- `Balance`;
+- `MLModel`;
+- `MLTask`;
+- `PredictionResult`;
+- `Transaction`.
 
-- пользователей;
-- балансов;
-- ML-моделей;
-- ML-задач;
-- результатов предсказаний;
-- транзакций.
-
-### Инициализация базы данных
-
-После запуска контейнеров:
+Инициализация базы:
 
 ```bat
 docker compose exec app python init_db.py
 ```
+
+## REST API
+
+Endpoints разделены по отдельным файлам в `app/src/routers`.
+
+Доступные endpoints:
+
+- `POST /auth/register` — регистрация;
+- `POST /auth/login` — вход;
+- `GET /users/me` — данные пользователя;
+- `GET /balance` — просмотр баланса;
+- `POST /balance/topup` — пополнение баланса;
+- `POST /predict` — выполнение предсказания;
+- `GET /history/transactions` — история транзакций;
+- `GET /history/predictions` — история предсказаний.
+
+Для защищённых запросов используется HTTP Basic Authentication.
+
+Swagger:
+
+```text
+http://localhost/docs
+```
+
+На текущем этапе `/predict` использует простую демонстрационную функцию определения тональности текста.
+
+## Telegram-бот
+
+Telegram-бот работает с REST API и поддерживает команды:
+
+- `/start`
+- `/login`
+- `/logout`
+- `/balance`
+- `/topup 100`
+- `/predict sentiment-model текст`
+- `/transactions`
+- `/history`
+
+Пример:
+
+```text
+/login
+```
+
+После авторизации:
+
+```text
+/topup 100
+/predict sentiment-model Мне нравится этот сервис
+/history
+```
+
+## Тестирование
+
+Для проверки REST API используется:
+
+```text
+api_smoke_test.py
+```
+
+Запуск:
+
+```bat
+python api_smoke_test.py
+```
+
+Тест проверяет:
+
+- регистрацию и вход;
+- неправильный пароль;
+- работу авторизации;
+- пополнение баланса;
+- валидацию данных;
+- выполнение предсказания;
+- списание средств;
+- недостаточный баланс;
+- историю транзакций;
+- историю предсказаний.
+
+При успешном прохождении теста:
+
+```text
+ВСЕ ИНТЕГРАЦИОННЫЕ ТЕСТЫ УСПЕШНО ПРОЙДЕНЫ
+```
+
+## Структура проекта
+
+```text
+ml-service-oop/
+├── app/
+│   ├── Dockerfile
+│   └── src/
+│       ├── routers/
+│       │   ├── auth.py
+│       │   ├── users.py
+│       │   ├── balance.py
+│       │   ├── predictions.py
+│       │   └── history.py
+│       ├── api.py
+│       ├── database.py
+│       ├── dependencies.py
+│       ├── models.py
+│       ├── schemas.py
+│       └── services.py
+│
+├── telegram_bot/
+│   ├── Dockerfile
+│   ├── bot.py
+│   └── requirements.txt
+│
+├── web-proxy/
+├── api_smoke_test.py
+├── docker-compose.yml
+└── README.md
+```
+
+## Используемые технологии
+
+- Python
+- FastAPI
+- Pydantic
+- SQLAlchemy
+- PostgreSQL
+- aiogram
+- Nginx
+- RabbitMQ
+- Docker
+- Docker Compose

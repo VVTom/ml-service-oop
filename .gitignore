@@ -6,7 +6,10 @@ venv/
 env/
 
 .env
-app/.env
+**/.env
 
 data/postgres/*
 data/rabbitmq/*
+
+test.ipynb
+**/test.ipynb
