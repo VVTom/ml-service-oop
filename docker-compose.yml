@@ -12,6 +12,8 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+    environment:
+      RABBITMQ_HOST: rabbitmq
 
   web-proxy:
     build: ./web-proxy
@@ -57,3 +59,33 @@ services:
       web-proxy:
         condition: service_started
     restart: unless-stopped
+
+  worker-1:
+    build:
+      context: ./worker
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: guest
+      RABBITMQ_PASSWORD: guest
+      APP_BASE_URL: http://app:8000
+      WORKER_ID: worker-1
+    depends_on:
+      - app
+      - rabbitmq
+    restart: on-failure
+
+  worker-2:
+    build:
+      context: ./worker
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: guest
+      RABBITMQ_PASSWORD: guest
+      APP_BASE_URL: http://app:8000
+      WORKER_ID: worker-2
+    depends_on:
+      - app
+      - rabbitmq
+    restart: on-failure
