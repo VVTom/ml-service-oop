@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -73,6 +74,35 @@ class MLTaskMessage(BaseModel):
 class PredictionAcceptedResponse(BaseModel):
     task_id: int
     status: str
+
+
+class BatchPredictionRequest(BaseModel):
+    model_name: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    rows: list[Any] = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+
+class BatchAcceptedItem(BaseModel):
+    row: int
+    task_id: int
+    status: str
+
+
+class BatchInvalidRow(BaseModel):
+    row: int
+    value: Any
+    error: str
+
+
+class BatchPredictionResponse(BaseModel):
+    accepted: list[BatchAcceptedItem]
+    invalid_rows: list[BatchInvalidRow]
 
 
 class WorkerResultRequest(BaseModel):

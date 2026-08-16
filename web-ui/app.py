@@ -2,6 +2,7 @@ import streamlit as st
 
 from api_client import (
     check_api,
+    create_batch_prediction,
     create_prediction,
     get_balance,
     get_prediction_history,
@@ -409,14 +410,15 @@ if st.session_state.authenticated and page == "ML-анализ":
 
         st.write(
             "Введите несколько текстов. "
-            "Каждая строка будет обработана "
-            "как отдельный ML-запрос."
+            "Каждая строка будет проверена backend "
+            "и обработана как отдельный ML-запрос."
         )
 
         st.info(
-            "За каждую успешно обработанную "
-            "строку списывается стоимость "
-            "одного ML-запроса."
+            "Некорректные строки не останавливают "
+            "обработку всего пакета. "
+            "Backend возвращает их отдельно, "
+            "а корректные строки передаются ML-воркерам."
         )
 
         batch_text = st.text_area(
@@ -438,121 +440,104 @@ if st.session_state.authenticated and page == "ML-анализ":
             st.session_state.batch_results = []
             st.session_state.batch_errors = []
 
-            rows = batch_text.splitlines()
+            rows = batch_text.split("\n")
 
-            valid_rows = []
+            success, response = create_batch_prediction(
+                login=st.session_state.login,
+                password=st.session_state.password,
+                rows=rows,
+            )
 
-            for row_number, row in enumerate(
-                rows,
-                start=1,
-            ):
-                cleaned_text = row.strip()
-
-                if not cleaned_text:
-                    st.session_state.batch_errors.append(
-                        {
-                            "Строка": row_number,
-                            "Данные": row,
-                            "Ошибка": ("Пустая строка"),
-                        }
-                    )
-
-                    continue
-
-                if len(cleaned_text) > 5000:
-                    st.session_state.batch_errors.append(
-                        {
-                            "Строка": row_number,
-                            "Данные": (cleaned_text[:100] + "..."),
-                            "Ошибка": ("Текст длиннее 5000 символов"),
-                        }
-                    )
-
-                    continue
-
-                valid_rows.append(
-                    (
-                        row_number,
-                        cleaned_text,
+            if not success:
+                st.error(
+                    response.get(
+                        "detail",
+                        "Не удалось создать пакет ML-задач",
                     )
                 )
 
-            if not valid_rows:
-                st.warning("Нет корректных строк для обработки")
-
             else:
-                progress_bar = st.progress(0)
+                accepted = response.get(
+                    "accepted",
+                    [],
+                )
 
-                total_rows = len(valid_rows)
+                invalid_rows = response.get(
+                    "invalid_rows",
+                    [],
+                )
 
-                for index, (
-                    row_number,
-                    text,
-                ) in enumerate(
-                    valid_rows,
-                    start=1,
-                ):
-                    success, response = create_prediction(
-                        login=(st.session_state.login),
-                        password=(st.session_state.password),
-                        text=text,
+                for invalid_row in invalid_rows:
+                    st.session_state.batch_errors.append(
+                        {
+                            "Строка": invalid_row["row"],
+                            "Данные": invalid_row["value"],
+                            "Ошибка": invalid_row["error"],
+                        }
                     )
 
-                    if not success:
-                        st.session_state.batch_errors.append(
-                            {
-                                "Строка": row_number,
-                                "Данные": text,
-                                "Ошибка": response.get(
-                                    "detail",
-                                    "Ошибка backend",
-                                ),
-                            }
-                        )
+                if accepted:
+                    progress_bar = st.progress(0)
 
-                    else:
-                        task_id = response["task_id"]
+                    total_tasks = len(accepted)
 
-                        (
-                            prediction_success,
-                            prediction,
-                        ) = wait_for_prediction(
-                            login=(st.session_state.login),
-                            password=(st.session_state.password),
-                            task_id=task_id,
-                        )
+                    with st.spinner("ML-модель обрабатывает корректные строки..."):
+                        for index, item in enumerate(
+                            accepted,
+                            start=1,
+                        ):
+                            row_number = item["row"]
+                            task_id = item["task_id"]
 
-                        if prediction_success:
-                            result = prediction["prediction"]
-
-                            st.session_state.batch_results.append(
-                                {
-                                    "Строка": row_number,
-                                    "Текст": text,
-                                    "Результат": (result["sentiment"]),
-                                    "Уверенность": round(
-                                        result["score"],
-                                        4,
-                                    ),
-                                    "Списано": (prediction["charged"]),
-                                    "Статус": (prediction["status"]),
-                                    "Worker": (result["worker_id"]),
-                                }
+                            (
+                                prediction_success,
+                                prediction,
+                            ) = wait_for_prediction(
+                                login=(st.session_state.login),
+                                password=(st.session_state.password),
+                                task_id=task_id,
                             )
 
-                        else:
-                            st.session_state.batch_errors.append(
-                                {
-                                    "Строка": row_number,
-                                    "Данные": text,
-                                    "Ошибка": prediction.get(
-                                        "detail",
-                                        "Ошибка ML-задачи",
-                                    ),
-                                }
-                            )
+                            if prediction_success:
+                                result = prediction["prediction"]
 
-                    progress_bar.progress(index / total_rows)
+                                original_text = ""
+
+                                if 1 <= row_number <= len(rows):
+                                    original_text = rows[row_number - 1]
+
+                                st.session_state.batch_results.append(
+                                    {
+                                        "Строка": row_number,
+                                        "Текст": original_text,
+                                        "Результат": (result["sentiment"]),
+                                        "Уверенность": round(
+                                            result["score"],
+                                            4,
+                                        ),
+                                        "Списано": (prediction["charged"]),
+                                        "Статус": (prediction["status"]),
+                                        "Worker": (result["worker_id"]),
+                                    }
+                                )
+
+                            else:
+                                st.session_state.batch_errors.append(
+                                    {
+                                        "Строка": row_number,
+                                        "Данные": (
+                                            rows[row_number - 1]
+                                            if (1 <= row_number <= len(rows))
+                                            else ""
+                                        ),
+                                        "Ошибка": prediction.get(
+                                            "detail",
+                                            "Ошибка ML-задачи",
+                                        ),
+                                    }
+                                )
+
+                            progress_bar.progress(index / total_tasks)
 
                 st.rerun()
 

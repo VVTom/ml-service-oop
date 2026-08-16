@@ -193,6 +193,37 @@ def create_prediction(
         return False, {"detail": (f"Ошибка подключения к backend: {error}")}
 
 
+def create_batch_prediction(
+    login: str,
+    password: str,
+    rows: list[str],
+) -> tuple[bool, dict[str, Any]]:
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/predict/batch",
+            auth=(login, password),
+            json={
+                "model_name": "sentiment-model",
+                "rows": rows,
+            },
+            timeout=15,
+        )
+
+        if response.status_code == 202:
+            return True, response.json()
+
+        return False, {
+            "detail": get_error_message(
+                response,
+                "Не удалось создать пакет ML-задач",
+            ),
+            "status_code": response.status_code,
+        }
+
+    except requests.RequestException as error:
+        return False, {"detail": (f"Ошибка подключения к backend: {error}")}
+
+
 def get_prediction_history(
     login: str,
     password: str,

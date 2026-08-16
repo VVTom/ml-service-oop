@@ -427,6 +427,192 @@ def run_tests() -> None:
 
     print("[OK] История содержит завершённое предсказание с worker_id")
 
+    # 14. Пополняем баланс для batch из двух валидных строк.
+    status_code, body = send_request(
+        method="POST",
+        path="/balance/topup",
+        payload={
+            "amount": 20,
+        },
+        authenticated=True,
+    )
+
+    assert_status(
+        test_name="Пополнение баланса для batch-запроса",
+        actual_status=status_code,
+        expected_status=200,
+        response_body=body,
+    )
+
+    assert body["balance"] == "20.00", (
+        f"После пополнения ожидался баланс 20.00, но получено: {body}"
+    )
+
+    # 15. Batch: две корректные строки и две некорректные.
+    batch_payload = {
+        "model_name": "sentiment-model",
+        "rows": [
+            "Мне очень нравится этот сервис",
+            "",
+            123,
+            "Это ужасный продукт",
+        ],
+    }
+
+    status_code, batch_body = send_request(
+        method="POST",
+        path="/predict/batch",
+        payload=batch_payload,
+        authenticated=True,
+    )
+
+    assert_status(
+        test_name="Batch-запрос с частично некорректными данными",
+        actual_status=status_code,
+        expected_status=202,
+        response_body=batch_body,
+    )
+
+    accepted = batch_body["accepted"]
+    invalid_rows = batch_body["invalid_rows"]
+
+    assert len(accepted) == 2, (
+        f"Ожидалось 2 принятые строки, получено: {accepted}"
+    )
+
+    assert len(invalid_rows) == 2, (
+        f"Ожидалось 2 отклонённые строки, получено: {invalid_rows}"
+    )
+
+    assert [item["row"] for item in accepted] == [1, 4], (
+        f"Ожидались принятые строки 1 и 4, получено: {accepted}"
+    )
+
+    assert [item["row"] for item in invalid_rows] == [2, 3], (
+        f"Ожидались отклонённые строки 2 и 3, получено: {invalid_rows}"
+    )
+
+    invalid_errors = {
+        item["row"]: item["error"]
+        for item in invalid_rows
+    }
+
+    assert invalid_errors[2] == "Пустая строка", (
+        f"Некорректная ошибка для строки 2: {invalid_rows}"
+    )
+
+    assert invalid_errors[3] == "Значение должно быть строкой", (
+        f"Некорректная ошибка для строки 3: {invalid_rows}"
+    )
+
+    print(
+        "[OK] Backend вернул невалидные строки отдельно, "
+        "а валидные принял в обработку"
+    )
+
+    batch_task_ids = [
+        item["task_id"]
+        for item in accepted
+    ]
+
+    for batch_task_id in batch_task_ids:
+        batch_prediction = wait_for_prediction(batch_task_id)
+
+        assert batch_prediction["status"] == "completed", (
+            f"Batch-задача {batch_task_id} не завершена: {batch_prediction}"
+        )
+
+        assert batch_prediction["charged"] == "10.00", (
+            f"Для batch-задачи {batch_task_id} ожидалось списание 10.00: "
+            f"{batch_prediction}"
+        )
+
+        batch_worker_id = batch_prediction["prediction"].get("worker_id")
+
+        assert batch_worker_id in {"worker-1", "worker-2"}, (
+            f"Некорректный worker_id batch-задачи {batch_task_id}: "
+            f"{batch_prediction}"
+        )
+
+        print(
+            f"[OK] Batch-задача {batch_task_id} завершена воркером "
+            f"{batch_worker_id}"
+        )
+
+    # 16. За две валидные строки должно списаться ровно 20 кредитов.
+    status_code, body = send_request(
+        method="GET",
+        path="/balance",
+        authenticated=True,
+    )
+
+    assert_status(
+        test_name="Баланс после batch-запроса",
+        actual_status=status_code,
+        expected_status=200,
+        response_body=body,
+    )
+
+    assert body["balance"] == "0.00", (
+        "После двух валидных строк ожидался баланс 0.00, "
+        f"получено: {body}"
+    )
+
+    print("[OK] За batch списано только за две корректные строки")
+
+    # 17. При нехватке денег batch не должен принимать задачи частично.
+    status_code, body = send_request(
+        method="POST",
+        path="/predict/batch",
+        payload={
+            "model_name": "sentiment-model",
+            "rows": [
+                "Первая корректная строка",
+                "Вторая корректная строка",
+            ],
+        },
+        authenticated=True,
+    )
+
+    assert_status(
+        test_name="Недостаточно средств для batch-запроса",
+        actual_status=status_code,
+        expected_status=402,
+        response_body=body,
+    )
+
+    print(
+        "[OK] Batch-запрос целиком отклонён при недостаточном балансе"
+    )
+
+    # 18. Проверяем, что batch-задачи появились в истории.
+    status_code, predictions = send_request(
+        method="GET",
+        path="/history/predictions",
+        authenticated=True,
+    )
+
+    assert_status(
+        test_name="История после batch-запроса",
+        actual_status=status_code,
+        expected_status=200,
+        response_body=predictions,
+    )
+
+    history_task_ids = {
+        prediction["task_id"]
+        for prediction in predictions
+    }
+
+    assert all(
+        batch_task_id in history_task_ids
+        for batch_task_id in batch_task_ids
+    ), (
+        f"Не все batch-задачи найдены в истории: {batch_task_ids}"
+    )
+
+    print("[OK] Batch-задачи присутствуют в истории предсказаний")
+
     print()
     print("=" * 70)
     print("ВСЕ ИНТЕГРАЦИОННЫЕ ТЕСТЫ УСПЕШНО ПРОЙДЕНЫ")
