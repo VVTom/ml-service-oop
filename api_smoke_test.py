@@ -89,6 +89,23 @@ def assert_status(
     print(f"[OK] {test_name}: HTTP {actual_status}")
 
 
+def get_current_balance() -> str:
+    status_code, body = send_request(
+        method="GET",
+        path="/balance",
+        authenticated=True,
+    )
+
+    assert_status(
+        test_name="Получение текущего баланса",
+        actual_status=status_code,
+        expected_status=200,
+        response_body=body,
+    )
+
+    return body["balance"]
+
+
 def wait_for_prediction(
     task_id: int,
     timeout: float = 10.0,
@@ -159,6 +176,14 @@ def run_tests() -> None:
         response_body=body,
     )
 
+    initial_balance = get_current_balance()
+
+    assert initial_balance == "0.00", (
+        f"Ожидался начальный баланс 0.00, получено: {initial_balance}"
+    )
+
+    print("[OK] Начальный баланс нового пользователя равен 0.00")
+
     # 3. Успешный логин.
     status_code, body = send_request(
         method="POST",
@@ -181,6 +206,28 @@ def run_tests() -> None:
     )
 
     print("[OK] Пользователь успешно авторизован")
+
+    status_code, body = send_request(
+        method="POST",
+        path="/auth/login",
+        payload={
+            "login": TEST_LOGIN,
+            "password": TEST_PASSWORD,
+        },
+    )
+
+    assert_status(
+        test_name="Повторная авторизация",
+        actual_status=status_code,
+        expected_status=200,
+        response_body=body,
+    )
+
+    assert body["login"] == TEST_LOGIN, (
+        f"Повторная авторизация вернула неверного пользователя: {body}"
+    )
+
+    print("[OK] Повторная авторизация работает")
 
     # 4. Логин с неверным паролем должен вернуть 401.
     status_code, body = send_request(
@@ -243,6 +290,12 @@ def run_tests() -> None:
         response_body=body,
     )
 
+    assert get_current_balance() == "0.00", (
+        "После ошибочного пополнения баланс изменился"
+    )
+
+    print("[OK] Ошибочное пополнение не изменяет баланс")
+
     # 8. Пополняем баланс ровно на стоимость одного предсказания.
     status_code, body = send_request(
         method="POST",
@@ -283,6 +336,35 @@ def run_tests() -> None:
         expected_status=400,
         response_body=body,
     )
+
+    assert get_current_balance() == "10.00", (
+        "Запрос к неизвестной модели изменил баланс"
+    )
+
+    print("[OK] Ошибка неизвестной модели не списывает кредиты")
+
+    status_code, body = send_request(
+        method="POST",
+        path="/predict",
+        payload={
+            "model_name": "sentiment-model",
+            "text": "",
+        },
+        authenticated=True,
+    )
+
+    assert_status(
+        test_name="Некорректный пустой ML-запрос",
+        actual_status=status_code,
+        expected_status=422,
+        response_body=body,
+    )
+
+    assert get_current_balance() == "10.00", (
+        "Некорректный ML-запрос изменил баланс"
+    )
+
+    print("[OK] Некорректные входные данные не приводят к списанию")
 
     # 10. Успешный запрос на предсказание ставится в очередь RabbitMQ.
     status_code, body = send_request(
@@ -366,6 +448,12 @@ def run_tests() -> None:
         expected_status=402,
         response_body=body,
     )
+
+    assert get_current_balance() == "0.00", (
+        "После отказа из-за недостаточного баланса баланс изменился"
+    )
+
+    print("[OK] При недостаточном балансе списание отсутствует")
 
     # 12. Проверяем историю транзакций.
     status_code, transactions = send_request(
@@ -585,7 +673,62 @@ def run_tests() -> None:
         "[OK] Batch-запрос целиком отклонён при недостаточном балансе"
     )
 
-    # 18. Проверяем, что batch-задачи появились в истории.
+    # 18. Повторно проверяем историю транзакций и сопоставляем её с действиями.
+    status_code, transactions = send_request(
+        method="GET",
+        path="/history/transactions",
+        authenticated=True,
+    )
+
+    assert_status(
+        test_name="Финальная проверка истории транзакций",
+        actual_status=status_code,
+        expected_status=200,
+        response_body=transactions,
+    )
+
+    credit_transactions = [
+        transaction
+        for transaction in transactions
+        if transaction["operation_type"] == "credit"
+    ]
+
+    debit_transactions = [
+        transaction
+        for transaction in transactions
+        if transaction["operation_type"] == "debit"
+    ]
+
+    assert len(credit_transactions) == 2, (
+        f"Ожидалось 2 пополнения, получено: {credit_transactions}"
+    )
+
+    assert len(debit_transactions) == 3, (
+        f"Ожидалось 3 списания, получено: {debit_transactions}"
+    )
+
+    successful_task_ids = {
+        task_id,
+        *batch_task_ids,
+    }
+
+    debit_task_ids = {
+        transaction["task_id"]
+        for transaction in debit_transactions
+    }
+
+    assert debit_task_ids == successful_task_ids, (
+        "Списания не совпадают с успешно выполненными ML-задачами. "
+        f"Ожидались task_id={successful_task_ids}, "
+        f"получены task_id={debit_task_ids}"
+    )
+
+    print(
+        "[OK] История транзакций соответствует пополнениям "
+        "и успешно выполненным ML-задачам"
+    )
+
+    # 19. Проверяем, что batch-задачи появились в истории.
     status_code, predictions = send_request(
         method="GET",
         path="/history/predictions",
@@ -615,7 +758,7 @@ def run_tests() -> None:
 
     print()
     print("=" * 70)
-    print("ВСЕ ИНТЕГРАЦИОННЫЕ ТЕСТЫ УСПЕШНО ПРОЙДЕНЫ")
+    print("ВСЕ ОБЯЗАТЕЛЬНЫЕ СЦЕНАРИИ ЗАДАНИЯ №7 УСПЕШНО ПРОЙДЕНЫ")
     print("=" * 70)
 
 
